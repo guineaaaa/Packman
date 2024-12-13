@@ -5,6 +5,8 @@
 #include <windows.h>
 #include <string>
 #include <vector>
+#include <chrono>
+#include <thread>
 
 using namespace std;
 
@@ -21,7 +23,7 @@ char map[map_row_size][map_column_size] = {   // 맵
     "#         dd   #          #           *",
     "####    ####   ####     ###     ## ####",
     "#        b b                          #",
-    "#    ###       ####    h   ##     #   #", 
+    "#    ###       ####    h   ##     #   #",
     "#    ###       #           #####      #",
     "# #    #  #    #   ####        #      #",
     "# #    #  #     #     #    #   #    ###",
@@ -70,7 +72,6 @@ struct path_node {
     // 이것을 사용하여 길을 찾을 때, 이전 위치로 이동하게 된다
 };
 
-
 // 위치를 나타내는 구조체
 struct position {
     int x;
@@ -93,6 +94,84 @@ vector<position> enemy_path;   // 적이 실제로 이동할 path
 // enemy_path가  back()와 pop_back()를 사용하므로
 // 뒤에서 앞쪽으로 값을 읽어오기 때문에 
 // 적의 위치에서 플레이어의 위치 방향 순서가 된다 
+// vector <bomb> bombs;
+
+struct bomb {
+    int x, y;
+    chrono::time_point<chrono::steady_clock>place_time;
+    bool is_active;
+};
+
+// 시한 폭탄을 설치하는 함수
+void place_bomb(int ex, int ey, vector<bomb>& bombs) {
+    if (bombs.size() < 3) {
+        bomb new_bomb;
+        new_bomb.x = ex; new_bomb.y = ey;
+        new_bomb.place_time = chrono::steady_clock::now();
+        new_bomb.is_active = true;
+        bombs.push_back(new_bomb);
+
+        map[ey][ex] = 'T'; // 'T'로 시한 폭탄 표시
+       
+        gotoxy(ex, ey);
+        system("cls");
+        display_map();
+    }
+}
+
+// 시한 폭탄 폭발 처리
+void explode_bomb(bomb& b) {
+    auto now = chrono::steady_clock::now();
+    auto duration = chrono::duration_cast<chrono::seconds>(now - b.place_time).count();
+    if (duration >=15 && b.is_active) {
+        b.is_active = false;
+        map[b.y][b.x] = ' ';  // 폭탄 제거
+        system("cls");
+        display_map();
+
+        // 주변 아이템 제거
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (b.x + dx >= 0 && b.x + dx < map_column_size && b.y + dy >= 0 && b.y + dy < map_row_size) {
+                    if (map[b.y + dy][b.x + dx] == '.' || map[b.y + dy][b.x + dx] == '#') {
+                        map[b.y + dy][b.x + dx] = ' '; // 아이템과 벽 제거
+                        system("cls");
+                        display_map();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 'I' 상태에서의 변경
+void change_player_state(char& player, bool& bomb_enabled) {
+    if (GetAsyncKeyState(0x49)) {  // 'I' 키를 눌렀을 경우
+        if (player == 'P') {
+            player = 'I';  // 플레이어 상태를 'I'로 변경
+            bomb_enabled = true;
+
+        }
+        else if (player == 'I') {
+            player = 'P';  // 'I'에서 'P'로 복귀
+            bomb_enabled = false;
+        }
+    }
+}
+
+// 시한 폭탄 해제
+void deactivate_bomb(int x, int y, vector<bomb>& bombs, int& score) {
+    for (auto it = bombs.begin(); it != bombs.end(); ++it) {
+        if (it->x == x && it->y == y && it->is_active) {
+            it->is_active = false;
+            map[it->y][it->x] = ' ';
+            score += 10;  // 점수 추가
+            system("cls");
+            display_map();
+            break;
+        }
+    }
+}
 
 
 // 해당 위치 (x, y)가 비어있는 경우에는 새로운 노드를 리스트에 추가한다
@@ -104,7 +183,6 @@ void add_new_node_to_bfs_list(int x, int y, int id) {
     // 현재의 위치 (x,y)가  빈 공간이거나 아이템이어서  이동이 가능하다면
     if (bfs_map[y][x] == ' ' || bfs_map[y][x] == '.') {
         bfs_map[y][x] = '#';      // 현재 그 위치를 방문한 것으로 표시한다
-
 
         node.x = x;
         node.y = y;
@@ -191,39 +269,15 @@ U_Exit:
     bfs_list.clear();
 }
 
-
-// 상태 관리 변수
-bool enemy_frozen = false;
-DWORD freeze_start_time; // 얼음 효과 시작 시간 (밀리초)
-
-void handleEnemyFreeze(int& game_speed, int ex, int ey) {
-    if (enemy_frozen) {
-        // 현재 시간과 시작 시간의 차이를 비교
-        DWORD now = GetTickCount();
-        if (now - freeze_start_time >= 5000) {
-            // 5초가 지나면 적 상태 복구
-            enemy_frozen = false;
-            game_speed = 5; // 원래 속도로 복구
-        }
-    }
-    else if (map[ey][ex] == '0'||map[ey][ex]=='-') {
-        // 적이 '0'에 접근한 경우
-        enemy_frozen = true;
-        game_speed = 30000; // 적 속도 변경
-        freeze_start_time = GetTickCount(); // 시작 시간 기록
-        map[ey][ex] = '.'; // 얼음 제거
-        gotoxy(ex, ey);
-        cout << '.';
-    }
-    
-}
-
+int enemy_travelled = 0;
 //===========================================
 //  M A I N   P R O G R A M 
 //===========================================
 int main()
 {
     bool game_is_running_now = true;
+    bool bomb_enabled = false; //시한 폭탄 활성화 상태
+    vector <bomb> bombs; //시한 폭탄 목록
 
     int x = 15; // 플레이어인 나의 시작 위치 x
     int y = 16; // 플레이어인 나의 시작 위치 y
@@ -234,20 +288,12 @@ int main()
     int ex = 2; // 적 시작 위치 x
     int ey = 2; // 적 시작 위치 y
 
-    int game_speed = 5;  // 초기값으로 쉬운 경우임
+    int game_speed = 7;  // 초기값으로 쉬운 경우임
     int score = 100;         // 점수 = 획득한 코인 갯수
     int count = 0;         // 게임이 매번 실행되는 횟수
 
     char player = 'P';      // 플레이어
     char enemy = 'E';      // enemy, 적
-    
-    // char hostage = 'H'; //인질 h 위치: {23,5}
-    // int hx = 23;
-    // int hy = 5;
-    
-
-    bool enemy_frozen = false; // 적이 얼어있는지 여부
-    int freeze_time = 0;       // 얼음 효과 지속 시간 (5초 동안 멈추는 시간)
 
     int enemy_speed = game_speed; // 적의 기본 속도 (5)
     int original_enemy_speed = game_speed; // 적의 원래 속도
@@ -271,9 +317,44 @@ int main()
     const position e_gate = { 38, 2 };
 
     while (game_is_running_now) {
+
         old_x = x;
         old_y = y;
 
+        // 'I' 키를 눌렀을 때 플레이어 상태 변경
+        change_player_state(player, bomb_enabled);
+
+        if (player == 'I') {
+            // 적 이동 처리 (예시로 적이 빈 공간에서 이동한다고 가정)
+            if (map[ey][ex] == ' ') {
+                enemy_travelled++;  // 적이 빈 공간을 지나갈 때마다 카운트 증가
+            }
+            // 적이 10칸을 지나갈 때마다 폭탄 배치
+            if (enemy_travelled >= 10) {
+                place_bomb(ex, ey, bombs);  // 현재 적의 위치에 폭탄 배치
+                enemy_travelled = 0;  // 카운트를 초기화
+            }
+
+            // 시한폭탄 폭발 처리
+            for (auto& b : bombs) {
+                explode_bomb(b);
+            }
+
+            // 'I' 상태일 때 스페이스바를 눌러 폭탄 해제
+            if (bomb_enabled && GetAsyncKeyState(VK_SPACE)) {
+                if ((map[y][x - 1] == 'T') || (map[y][x + 1] == 'T')) {
+                    if (map[y][x - 1] == 'T') {
+                        // 왼쪽에 폭탄이 있으면 해당 폭탄 해제
+                        deactivate_bomb(x - 1, y, bombs, score);
+                    }
+                    else if (map[y][x + 1] == 'T') {
+                        // 오른쪽에 폭탄이 있으면 해당 폭탄 해제
+                        deactivate_bomb(x + 1, y, bombs, score);
+                    }
+                }
+                
+            }
+        }
         // S 키를 눌렀을 경우
         if (GetAsyncKeyState(0x53)) {
             player = 'S';
@@ -284,11 +365,12 @@ int main()
             player = 'R';
         }
 
+
         // Player를 이동시키는 방향 키
         if (GetAsyncKeyState(VK_UP)) {
             if (map[y - 1][x] == '.' || map[y - 1][x] == ' ') y--;
             else if (y - 1 == n_gate.y && x == n_gate.x) { y = s_gate.y; x = s_gate.x; } // N 게이트에서 S 게이트로 이동
-            
+
 
             // 'p' 일 경우에만 벽을 움직일 수 있다.
             else if (player == 'P') {
@@ -418,7 +500,7 @@ int main()
             }
         }
 
-        if (GetAsyncKeyState(VK_DOWN) ) {
+        if (GetAsyncKeyState(VK_DOWN)) {
             if (map[y + 1][x] == '.' || map[y + 1][x] == ' ') y++;
             else if (y + 1 == s_gate.y && x == s_gate.x) { y = n_gate.y; x = n_gate.x; } // S 게이트에서 N 게이트로 이동
 
@@ -546,198 +628,169 @@ int main()
                 else if ((map[y + 1][x] == 'D') && (map[y + 2][x] == '*')) { y++; map[y][x] = ' '; map[y + 1][x] = '*'; system("cls"); display_map(); score += 4; }
                 else if ((map[y + 1][x] == 'F') && (map[y + 2][x] == '*')) { y++; map[y][x] = ' '; map[y + 1][x] = '*'; system("cls"); display_map(); score += 4; }
             }
-}
-
-        // 'h' 왼쪽에서 오른쪽 버튼을 눌렀을 경우
-        // 'h'가 'H'로 바뀌고 player를 따라 와야 한다.
-        // 'h' 왼쪽에서 오른쪽 버튼을 눌렀을 경우
-       
-        if (GetAsyncKeyState(VK_RBUTTON)) {
-            if (map[y][x - 1] == 'h') {
-                map[y][x - 1] = 'H'; // 'h'를 'H'로 변경
-                system("cls");
-                display_map();
-            }
         }
 
         if (GetAsyncKeyState(VK_LEFT)) {
-            // 현재 위치 저장
-            old_x = x;
-            old_y = y;
 
             // 이동하려는 위치가 빈 공간이거나 코인이라면
             if (map[y][x - 1] == '.' || map[y][x - 1] == ' ') {
                 x--; // 플레이어 이동
             }
-            // 이동하려는 위치가 'H'라면
-            else if (map[y][x - 1] == 'H') {
-                x--;
-                gotoxy(old_x, old_y);
-                cout << 'H';
 
-                // 이전 위치에 'H'를 배치
-                map[old_y][old_x] = ' ';
-
-                // 맵과 화면 갱신
-                system("cls");
-                display_map();
-            }
-
-       
 
             // 'S' 일 경우 벽을 넘을 수 있다.
             else if (player == 'S') {
-                    int i = 1;
+                int i = 1;
 
-                    // 왼쪽으로 벽(#)이 몇 개인지 계산
-                    while (x - 1 - i >= 0 && map[y][x - 1 - i] == '#') {
-                        i++;
-                    }
-
-                    // 범위를 확인하고 이동
-                    if (x - i - 1 >= 0 && (map[y][x - 1 - i] == '.' || map[y][x - 1 - i] == ' ')&&(score>=i*2)) {
-                        gotoxy(y, x - 1 - i); 
-                        x -= (i + 1); 
-                        cout << player;
-                        score -= i*2;
-
-                        system("cls");
-                        display_map();
-                    }
+                // 왼쪽으로 벽(#)이 몇 개인지 계산
+                while (x - 1 - i >= 0 && map[y][x - 1 - i] == '#') {
+                    i++;
                 }
+
+                // 범위를 확인하고 이동
+                if (x - i - 1 >= 0 && (map[y][x - 1 - i] == '.' || map[y][x - 1 - i] == ' ') && (score >= i * 2)) {
+                    gotoxy(y, x - 1 - i);
+                    x -= (i + 1);
+                    cout << player;
+                    score -= i * 2;
+
+                    system("cls");
+                    display_map();
+                }
+            }
 
             // 'p' 일 때만 벽을 밀 수 있다.
             else if (player == 'P') {
-            if (x - 1 == w_gate.x && y == w_gate.y) { y = e_gate.y; x = e_gate.x; } // Teleport W to E
+                if (x - 1 == w_gate.x && y == w_gate.y) { y = e_gate.y; x = e_gate.x; } // Teleport W to E
 
-            else if ((map[y][x - 1] == '#') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = '#'; // 이동 된 한칸 옆로 '#'를 이동 시킨다.
+                else if ((map[y][x - 1] == '#') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = '#'; // 이동 된 한칸 옆로 '#'를 이동 시킨다.
 
-                system("cls");
-                display_map();
+                    system("cls");
+                    display_map();
+                }
+
+                // 대문자 이동 시키기
+                else if ((map[y][x - 1] == 'A') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'A';
+
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'B') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'B';
+
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'D') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'D';
+
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'F') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'F';
+
+                    system("cls");
+                    display_map();
+                }
+
+                // '#'을 밀어 넣기
+                else if ((map[y][x - 1] == '#') && (map[y][x - 2] == '*')) {
+                    x--;
+                    map[y][x] = ' ';
+                    map[y][x - 1] = '*';
+
+                    system("cls");
+                    display_map();
+
+                    score += 2;
+                }
+
+                // 소문자 이동 시키기
+                else if ((map[y][x - 1] == 'a') && (map[y][x - 2] == ' ') && (x - 2 > 0)) { // 글자 이동
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'a';
+
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'b') && (map[y][x - 2] == ' ') && (x - 2 > 0)) { // 글자 이동
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'b';
+
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'd') && (map[y][x - 2] == ' ') && (x - 2 > 0)) { // 글자 이동
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'd';
+
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'f') && (map[y][x - 2] == ' ') && (x - 2 > 0)) { // 글자 이동
+                    x--; // 이동
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'f';
+
+                    system("cls");
+                    display_map();
+                }
+
+                // 소문자 + 소문자 대문자
+                else if ((map[y][x - 1] == 'a') && (map[y][x - 2] == 'a') && (x - 2 > 0)) {
+                    x--;
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'A';
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'b') && (map[y][x - 2] == 'b') && (x - 2 > 0)) {
+                    x--;
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'B';
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'd') && (map[y][x - 2] == 'd') && (x - 2 > 0)) {
+                    x--;
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'D';
+                    system("cls");
+                    display_map();
+                }
+                else if ((map[y][x - 1] == 'f') && (map[y][x - 2] == 'f') && (x - 2 > 0)) {
+                    x--;
+                    map[y][x] = ' ';
+                    map[y][x - 1] = 'F';
+                    system("cls");
+                    display_map();
+                }
+                // 알파벳 대문자를 밀어 넣기
+                else if ((map[y][x - 1] == 'A') && (map[y][x - 2] == '*')) { x--; map[y][x] = ' '; map[y][x - 1] = '*'; system("cls"); display_map(); score += 4; }
+                else if ((map[y][x - 1] == 'B') && (map[y][x - 2] == '*')) { x--; map[y][x] = ' '; map[y][x - 1] = '*'; system("cls"); display_map(); score += 4; }
+                else if ((map[y][x - 1] == 'D') && (map[y][x - 2] == '*')) { x--; map[y][x] = ' '; map[y][x - 1] = '*'; system("cls"); display_map(); score += 4; }
+                else if ((map[y][x - 1] == 'F') && (map[y][x - 2] == '*')) { x--; map[y][x] = ' '; map[y][x - 1] = '*'; system("cls"); display_map(); score += 4; }
             }
 
-            // 대문자 이동 시키기
-            else if ((map[y][x - 1] == 'A') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = 'A';
-
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'B') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = 'B';
-
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'D') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = 'D';
-
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'F') && (map[y][x - 2] == ' ') && (x - 2 > 0)) {
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = 'F';
-
-                system("cls");
-                display_map();
-            }
-
-            // '#'을 밀어 넣기
-            else if ((map[y][x - 1] == '#') && (map[y][x - 2] == '*')) {
-                x--;
-                map[y][x] = ' ';
-                map[y][x - 1] = '*';
-
-                system("cls");
-                display_map();
-
-                score += 2;
-            }
-
-            // 소문자 이동 시키기
-            else if ((map[y][x - 1] == 'a') && (map[y][x - 2] == ' ') && (x - 2 > 0)) { // 글자 이동
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = 'a';
-
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'b') && (map[y][x - 2] == ' ') && (x - 2 > 0)) { // 글자 이동
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = 'b';
-
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'd') && (map[y][x - 2] == ' ') && (x - 2 > 0)) { // 글자 이동
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = 'd';
-
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'f') && (map[y][x - 2] == ' ') && (x - 2 > 0)) { // 글자 이동
-                x--; // 이동
-                map[y][x] = ' ';
-                map[y][x - 1] = 'f';
-
-                system("cls");
-                display_map();
-            }
-
-            // 소문자 + 소문자 대문자
-            else if ((map[y][x - 1] == 'a') && (map[y][x - 2] == 'a') && (x - 2 > 0)) {
-                x--;
-                map[y][x] = ' ';
-                map[y][x - 1] = 'A';
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'b') && (map[y][x - 2] == 'b') && (x - 2 > 0)) {
-                x--;
-                map[y][x] = ' ';
-                map[y][x - 1] = 'B';
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'd') && (map[y][x - 2] == 'd') && (x - 2 > 0)) {
-                x--;
-                map[y][x] = ' ';
-                map[y][x - 1] = 'D';
-                system("cls");
-                display_map();
-            }
-            else if ((map[y][x - 1] == 'f') && (map[y][x - 2] == 'f') && (x - 2 > 0)) {
-                x--;
-                map[y][x] = ' ';
-                map[y][x - 1] = 'F';
-                system("cls");
-                display_map();
-            }
-            // 알파벳 대문자를 밀어 넣기
-            else if ((map[y][x - 1] == 'A') && (map[y][x - 2] == '*')) { x--; map[y][x] = ' '; map[y][x - 1] = '*'; system("cls"); display_map(); score += 4; }
-            else if ((map[y][x - 1] == 'B') && (map[y][x - 2] == '*')) { x--; map[y][x] = ' '; map[y][x - 1] = '*'; system("cls"); display_map(); score += 4; }
-            else if ((map[y][x - 1] == 'D') && (map[y][x - 2] == '*')) { x--; map[y][x] = ' '; map[y][x - 1] = '*'; system("cls"); display_map(); score += 4; }
-            else if ((map[y][x - 1] == 'F') && (map[y][x - 2] == '*')) { x--; map[y][x] = ' '; map[y][x - 1] = '*'; system("cls"); display_map(); score += 4; }
-            }
-            
         }
 
-        if (GetAsyncKeyState(VK_RIGHT) ) {
+        if (GetAsyncKeyState(VK_RIGHT)) {
             if (map[y][x + 1] == '.' || map[y][x + 1] == ' ') x++;
             else if (x + 1 == e_gate.x && y == e_gate.y) { y = w_gate.y; x = w_gate.x; } // Teleport E to W
 
@@ -868,57 +921,6 @@ int main()
             }
         }
 
-
-        // freeze
-        if (GetAsyncKeyState(VK_SPACE) && score >= 5) {
-            if (map[y][x] != '0') {
-               
-                if (map[y - 1][x] == ' ') {
-                    map[y - 1][x] = '0';  
-                    
-                    gotoxy(x, y - 1);
-                    cout << '0';
-                    system("cls"); display_map();
-                }
-                
-                score -= 5; 
-            }
-        }
-
-        if ((map[ey][ex] == '0') || (map[ey][ex] == '-')) {
-            game_speed = 30000;
-            map[ey][ex] = '.'; 
-            gotoxy(ex, ey);
-            cout << '.';
-        }
-
-        // 수평으로 총 쏘기
-        if (GetAsyncKeyState(0x41)) {
-            if (score >= 5) { // 점수 확인
-                int i = 1;
-
-                // y 좌표 검사
-                for(int i=0;i<20;i++)
-
-                // x 좌표 검사
-                for (int i = 0; i < 40; i++) {
-                    if (map[y][i] == 'E') {
-                        map[ey][ex] = '-';
-
-                    }
-                }
-
-                
-            }
-            else {
-                // 점수가 부족할 때 메시지 표시
-                gotoxy(0, 0);
-                cout << "Not enough score to shoot!";
-                Sleep(1000);
-            }
-        }
-
-
         // 플레이어인 내가 위치를 이동한 경우, 적의 이동 경로를 다시 계산한다
         // old_x, old_y로 전에 있는 위치를 저장해서 한칸 전 단계를 따라오도록 
         if (old_x != x || old_y != y) {
@@ -931,7 +933,7 @@ int main()
             if (map[old_y][old_x] == '*') {
                 cout << "*";
             }
-           
+
             else {
                 cout << " "; // 빈 공간 출력
             }
@@ -951,24 +953,24 @@ int main()
                 score++;
             }
 
-            if (map[old_x][old_y] == 'H') {
-                cout << ' ';
-
-                system("cls");
-                display_map();
-            }
-
         }
 
-        gotoxy(old_x, old_y);
-        cout << 'H';
+        if (map[ey][ex] == 'T') {
+            gotoxy(ex, ey);
+            cout << 'T';
+        }
+        else {
+            map[ey][ex] = '.';
+            gotoxy(ex, ey);
+            cout << ".";
+        }
 
-        // 맵상의 적의 현재 위치에 코인을 놓는다
+        /* 맵상의 적의 현재 위치에 코인을 놓는다
         map[ey][ex] = '.';
         gotoxy(ex, ey);
         cout << ".";
+        */
 
-        
         if (count % game_speed == 0 &&      // 게임 진행 속도를 조절하기 위해서임
             enemy_path.size() != 0) {      // enemy가 플레이어에게 다가올 경로가 아직 남아 있다는 뜻임
 
@@ -981,13 +983,6 @@ int main()
             // 뒤에서 앞쪽으로 값을 읽어오기 때문에 
             // 적의 위치에서 플레이어의 위치 방향 순서가 된다   
         }
-
-
-        // handleEnemyFreeze(game_speed, ex, ey);
-
-        // 'h' 오른쪽에서 사용자가 RButton을 누르면 'h'는 'H'로 변경된다.
-        //'H'가 player의 이전 위치에 표시되어 따라오는것처럼 보이도록 설정한다 
-
 
         // 적의 새 위치에 적을 표시한다
         gotoxy(ex, ey);
