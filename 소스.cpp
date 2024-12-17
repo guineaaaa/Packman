@@ -5,8 +5,8 @@
 #include <windows.h>
 #include <string>
 #include <vector>
-#include <chrono>
-#include <thread>
+#include <chrono> // 시간 관련 기능을 제공하는 라이브러리
+#include <thread> // 스레드 관련 기능 제공하는 라이브러리
 
 using namespace std;
 
@@ -94,47 +94,55 @@ vector<position> enemy_path;   // 적이 실제로 이동할 path
 // enemy_path가  back()와 pop_back()를 사용하므로
 // 뒤에서 앞쪽으로 값을 읽어오기 때문에 
 // 적의 위치에서 플레이어의 위치 방향 순서가 된다 
-// vector <bomb> bombs;
 
-struct bomb {
-    int x, y;
-    chrono::time_point<chrono::steady_clock>place_time;
-    bool is_active;
+// 폭탄의 정보를 저장하는 구조체
+struct bomb { 
+    int x, y; // 폭탄의 위치
+    chrono::time_point<chrono::steady_clock>place_time; // 폭탄 설치 시각
+    bool is_active; // 폭탄이 활성화 상태인지의 여부
 };
 
-// 시한 폭탄을 설치하는 함수
+/* 시한 폭탄을 설치하는 함수
+  - 적이 지나갈 때 최대 3개의 폭탄을 설치하도록 한다.
+  - 폭탄은 적의 현재 위치에 배치되며, 맵에 'T'로 표시된다.
+*/
 void place_bomb(int ex, int ey, vector<bomb>& bombs) {
-    if (bombs.size() < 3) {
-        bomb new_bomb;
-        new_bomb.x = ex; new_bomb.y = ey;
-        new_bomb.place_time = chrono::steady_clock::now();
-        new_bomb.is_active = true;
-        bombs.push_back(new_bomb);
+    if (bombs.size() < 3) { // 폭탄의 최대 개수 제한: 3개
+        bomb new_bomb; // 새 폭탄 생성
+        new_bomb.x = ex; new_bomb.y = ey; // 폭탄 위치를 현재 적의 위치로 설정
+        new_bomb.place_time = chrono::steady_clock::now(); // 현재 시간 저장
+        new_bomb.is_active = true; // 폭탄을 활성 상태로 저장
+        bombs.push_back(new_bomb); // 폭탄을 폭탄 리스트에 추가
 
-        map[ey][ex] = 'T'; // 'T'로 시한 폭탄 표시
+        map[ey][ex] = 'T'; // 'T'로 시한 폭탄을 map에표시한다.
        
-        gotoxy(ex, ey);
-        system("cls");
-        display_map();
+        gotoxy(ex, ey); // 콘솔 커서를 폭탄 위치로 이동한다.
+        system("cls"); // 화면 갱신
+        display_map(); // 현재 맵을 화면에 표시
     }
 }
 
-// 시한 폭탄 폭발 처리
-void explode_bomb(bomb& b) {
-    auto now = chrono::steady_clock::now();
-    auto duration = chrono::duration_cast<chrono::seconds>(now - b.place_time).count();
-    if (duration >=15 && b.is_active) {
-        b.is_active = false;
-        map[b.y][b.x] = ' ';  // 폭탄 제거
-        system("cls");
+/* 시한 폭탄 폭발 처리 함수
+*  - 폭탄이 설치 된 후 15초 이상 경과하면 폭발하고, 주변 3x3 범위의 아이템과 벽이 제거된다.
+*  - 점수는 폭발 시 -10점 감소한다.
+*/
+void explode_bomb(bomb& b,int &score) {
+    auto now = chrono::steady_clock::now(); // 현재 시간을 가져옴
+    auto duration = chrono::duration_cast<chrono::seconds>(now - b.place_time).count(); //폭탄이 설치 된 후 경과 시간을 계산
+    if (duration >=15 && b.is_active) { //폭탄이 설치 된 지 15초 이상 경과되었고, 활성 상태라면
+        b.is_active = false; // 폭탄을 비활성화
+        map[b.y][b.x] = ' ';  // 폭탄을 map에서 제거
+        score -= 10; // 점수를 10점 감소
+        system("cls"); // 화면 갱신
         display_map();
 
-        // 주변 아이템 제거
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
+        // 폭탄 주변 아이템 제거
+        for (int dy = -1; dy <= 1; dy++) { // 폭탄 위치 기준으로 세로(-1, 0, 1) 범위
+            for (int dx = -1; dx <= 1; dx++) {  // 폭탄 위치 기준으로 가로(-1, 0, 1) 범위
                 if (b.x + dx >= 0 && b.x + dx < map_column_size && b.y + dy >= 0 && b.y + dy < map_row_size) {
+                    // map의 경계 안에 있는지 확인한다.
                     if (map[b.y + dy][b.x + dx] == '.' || map[b.y + dy][b.x + dx] == '#') {
-                        map[b.y + dy][b.x + dx] = ' '; // 아이템과 벽 제거
+                        map[b.y + dy][b.x + dx] = ' '; // 해당 위치의 아이템과 벽 제거
                         system("cls");
                         display_map();
                     }
@@ -144,7 +152,7 @@ void explode_bomb(bomb& b) {
     }
 }
 
-// 'I' 상태에서의 변경
+// 플레이어의 'I' 상태 변경
 void change_player_state(char& player, bool& bomb_enabled) {
     if (GetAsyncKeyState(0x49)) {  // 'I' 키를 눌렀을 경우
         if (player == 'P') {
@@ -159,16 +167,19 @@ void change_player_state(char& player, bool& bomb_enabled) {
     }
 }
 
-// 시한 폭탄 해제
+/* 시한 폭탄 해제 함수
+   - 플레이어가 폭탄의 왼쪽이나 오른쪽에 위치한 상태에서
+   스페이스바를 눌렀을 떄 폭탄을 제거하며 10점이 추가된다.
+*/
 void deactivate_bomb(int x, int y, vector<bomb>& bombs, int& score) {
-    for (auto it = bombs.begin(); it != bombs.end(); ++it) {
-        if (it->x == x && it->y == y && it->is_active) {
-            it->is_active = false;
-            map[it->y][it->x] = ' ';
+    for (auto it = bombs.begin(); it != bombs.end(); ++it) { // 모든 폭탄을 순회한다
+        if (it->x == x && it->y == y && it->is_active) { // 현재 폭탄의 위치와 활성 상태를 확인한다.
+            it->is_active = false; // 폭탄을 비활성화 시킨다.
+            map[it->y][it->x] = ' '; // 폭탄을 맵에서 제거한다
             score += 10;  // 점수 추가
             system("cls");
             display_map();
-            break;
+            break; //하나의 폭탄만 해체하므로, 반복문 종료
         }
     }
 }
@@ -270,6 +281,7 @@ U_Exit:
 }
 
 int enemy_travelled = 0;
+
 //===========================================
 //  M A I N   P R O G R A M 
 //===========================================
@@ -277,7 +289,7 @@ int main()
 {
     bool game_is_running_now = true;
     bool bomb_enabled = false; //시한 폭탄 활성화 상태
-    vector <bomb> bombs; //시한 폭탄 목록
+    vector <bomb> bombs; //시한 폭탄 객체(bomb 구조체)를 저장하는 벡터
 
     int x = 15; // 플레이어인 나의 시작 위치 x
     int y = 16; // 플레이어인 나의 시작 위치 y
@@ -334,10 +346,10 @@ int main()
                 place_bomb(ex, ey, bombs);  // 현재 적의 위치에 폭탄 배치
                 enemy_travelled = 0;  // 카운트를 초기화
             }
-
-            // 시한폭탄 폭발 처리
+            
+            // 폭탄 리스트에 있는 모든 폭탄 객체를 하나씩 확인하며 폭발 여부를 처리한다.
             for (auto& b : bombs) {
-                explode_bomb(b);
+                explode_bomb(b,score);
             }
 
             // 'I' 상태일 때 스페이스바를 눌러 폭탄 해제
@@ -345,6 +357,7 @@ int main()
                 if ((map[y][x - 1] == 'T') || (map[y][x + 1] == 'T')) {
                     if (map[y][x - 1] == 'T') {
                         // 왼쪽에 폭탄이 있으면 해당 폭탄 해제
+                        // 폭탄의 위치를 인자로 전달하여 폭탄 해제 함수 호출
                         deactivate_bomb(x - 1, y, bombs, score);
                     }
                     else if (map[y][x + 1] == 'T') {
@@ -357,14 +370,13 @@ int main()
         }
         // S 키를 눌렀을 경우
         if (GetAsyncKeyState(0x53)) {
-            player = 'S';
+            if (player == 'P') {
+                player = 'S';
+            }
+            else if (player == 'S') {
+                player = 'P';
+            } 
         }
-
-        // R 키를 눌렀을 경우
-        if (GetAsyncKeyState(0x52)) {
-            player = 'R';
-        }
-
 
         // Player를 이동시키는 방향 키
         if (GetAsyncKeyState(VK_UP)) {
@@ -955,6 +967,8 @@ int main()
 
         }
 
+        // 시한 폭탄 모드에서 'T'가 map에 인식되면 적이 폭탄 'T'를 표시한다.
+        // 시한 폭탄 모드가 아닐 경우 적은 아이템 '.'을 놓는다.
         if (map[ey][ex] == 'T') {
             gotoxy(ex, ey);
             cout << 'T';
